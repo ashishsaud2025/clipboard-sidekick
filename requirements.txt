@@ -1,0 +1,4 @@
+pyside6>=6.6
+pynput>=1.8
+psutil>=5.9
+requests>=2.31
