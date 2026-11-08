@@ -38,6 +38,8 @@ def load_settings(path: str | Path) -> Settings:
     try:
         raw = p.read_text(encoding="utf-8")
         data = json.loads(raw)
+    except (UnicodeDecodeError, OSError) as exc:
+        raise ValueError(f"Could not read settings file {p}: {exc}") from exc
     except json.JSONDecodeError as exc:
         raise ValueError(f"Malformed settings JSON in {p}: {exc}") from exc
 
