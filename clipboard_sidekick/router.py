@@ -9,14 +9,13 @@ Routing order is significant:
     3. error , tracebacks, exceptions, HTTP 4xx/5xx, file.ext:line[:col]
     4. code  , brackets, keywords, indentation heuristics
     5. number, number/unit or date-like text
-    6. word  , 1-3 term-like tokens, no code symbols
+    6. word  , 1-3 tokens, term-charset characters only (no code symbols)
     7. other , fallback
 
-Multi-word `word` caveat: a phrase of 1-3 tokens counts as a short term only
-if at least one token is "marked" (contains an uppercase letter, a digit, or
-a term symbol such as + . _ # /). All-lowercase prose like "just hello there"
-is prose, not a term, and falls through to `other`. Single tokens match on
-their own.
+`word` implements the plain rule: 1-3 whitespace-separated tokens whose
+characters are not code symbols. Multi-word plain-lowercase phrases such as
+"machine learning" and "just hello there" are `word`; prose longer than 3
+tokens falls through to `other`.
 """
 
 import re
@@ -117,27 +116,17 @@ def _looks_like_number(text: str) -> bool:
 
 
 # Word pattern
+# Alphanumeric-leading tokens; ".", "-", "_", "+", "#", "/" are allowed inside a
+# token (C++, Node.js, TCP/IP). Anything else, punctuation, emoji, "!", is a
+# code symbol or non-word character and disqualifies the text as a `word`.
 _WORD_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_+.#/-]*$")
-_MARKED_CHARS = set("_+.#/")
-
-
-def _is_marked(token: str) -> bool:
-    """True when a token carries an uppercase letter, digit, or term symbol -
-    the signal that a multi-word phrase is a technical term, not prose."""
-    if any(c.isupper() or c.isdigit() for c in token):
-        return True
-    return any(c in _MARKED_CHARS for c in token)
 
 
 def _looks_like_word(text: str) -> bool:
     tokens = text.split()
     if not (1 <= len(tokens) <= 3):
         return False
-    if any(not _WORD_TOKEN_RE.match(t) for t in tokens):  # no code symbols
-        return False
-    if len(tokens) == 1:
-        return True
-    return any(_is_marked(t) for t in tokens)
+    return all(_WORD_TOKEN_RE.match(t) for t in tokens)
 
 
 def classify(text: str) -> str:

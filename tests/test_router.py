@@ -11,7 +11,9 @@ CASES = [
     ("A" * 500, "long"),
     ("42 kg", "number"),
     ("jan 5 2026", "number"),
-    ("just hello there", "other"),
+    ("just hello there", "word"),
+    ("machine learning", "word"),
+    ("large language model", "word"),
     # Additional coverage: ERR! token, line:col pattern, HTTP 500
     ("cargo build failed: ERR! unresolved import", "error"),
     ("app.py:42:10: invalid syntax", "error"),
@@ -20,6 +22,7 @@ CASES = [
     ("https://github.com/psf/requests", "url"),
     ("2026-11-05", "number"),
     ("🎉🔥💯", "other"),
+    ("completely unrelated prose sentence with many words", "other"),
     # Extra headroom for the >=15 requirement
     ("ValueError: invalid literal for int() with base 10", "error"),
     ("import os\nimport sys", "code"),
