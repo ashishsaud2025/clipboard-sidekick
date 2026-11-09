@@ -2,6 +2,10 @@
 
 Pure stdlib (re). No I/O. Detection rules are applied to the raw text
 independently; a single text may trip several rules.
+
+Note: unquoted `password=`-style values are redacted through the end of the
+line (over-redaction is preferred to leaking any part of a passphrase);
+quoted values are redacted exactly up to the closing quote.
 """
 
 import re
@@ -11,23 +15,26 @@ _REDACTED_PRIVATE_KEY = "[REDACTED: PRIVATE KEY]"
 _REDACTED_CARD = "[REDACTED: CARD]"
 
 # Private key blocks first so their body is removed wholesale before the
-# token/hex rules get a chance to nibble at it.
+# token/hex rules get a chance to nibble at it. The marker allows trailing
+# qualifier words after "PRIVATE KEY" (e.g. gpg armor "PGP PRIVATE KEY BLOCK").
+_PRIVATE_KEY_MARK = r"[A-Z0-9 ]*PRIVATE KEY(?: [A-Z0-9]+)*"
 _PRIVATE_KEY_BLOCK_RE = re.compile(
-    r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----",
+    r"-----BEGIN " + _PRIVATE_KEY_MARK + r"-----.*?-----END " + _PRIVATE_KEY_MARK + r"-----",
     re.DOTALL,
 )
 # Any BEGIN left after the terminated blocks are gone is unterminated:
 # redact from the BEGIN marker to the end of the string.
 _PRIVATE_KEY_UNTERMINATED_RE = re.compile(
-    r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*\Z",
+    r"-----BEGIN " + _PRIVATE_KEY_MARK + r"-----[\s\S]*\Z",
 )
 
-# password= / passwd: / pwd = style pairs (case-insensitive). The value is
-# either a quoted string (single or double quotes, no newlines) or the rest
-# of the current token (no whitespace, comma or semicolon).
+# password= / passwd: / pwd = style pairs (case-insensitive). The key may be
+# wrapped in matching quotes (JSON-ish keys like "password"). The value is
+# either a quoted string (single or double quotes, no newlines, bounded by
+# the quotes) or the rest of the line through \n / end of string.
 _PASSWORD_RE = re.compile(
-    r"(?P<key>(?:password|passwd|pwd)\s*[:=]\s*)"
-    r"(?P<value>\"[^\"\n]*\"|'[^'\n]*'|[^\s,;\n]+)",
+    r"(?P<key>[\"']?(?:password|passwd|pwd)[\"']?\s*[:=]\s*)"
+    r"(?P<value>\"[^\"\n]*\"|'[^'\n]*'|[^\n]*)",
     re.IGNORECASE,
 )
 

@@ -122,7 +122,9 @@ def test_should_skip_prefetch_false():
 
 def test_multi_secret_text_redacts_each():
     from clipboard_sidekick.redaction import redact
-    text = "sk-1234567890abcdef1234567890abcdef and password=hunter2 and 4111 1111 1111 1111"
+    # Secrets on separate lines: an unquoted password value redacts to end of
+    # line by design, so the card must not share the password's line.
+    text = "sk-1234567890abcdef1234567890abcdef and password=hunter2\n4111 1111 1111 1111"
     out, triggered = redact(text)
     assert triggered is True
     assert "sk-1234567890abcdef1234567890abcdef" not in out
@@ -155,3 +157,58 @@ def test_empty_and_whitespace_input():
     assert redact("") == ("", False)
     assert redact("   \n\t  ") == ("   \n\t  ", False)
     assert should_skip_prefetch("   ") is False
+
+
+def test_redact_pgp_private_key_block():
+    from clipboard_sidekick.redaction import redact
+    body = "hQEMA...PGP SECRET ARMOR BODY...xyz"
+    text = f"-----BEGIN PGP PRIVATE KEY BLOCK-----\n{body}\n-----END PGP PRIVATE KEY BLOCK-----"
+    out, triggered = redact(text)
+    assert triggered is True
+    assert "[REDACTED: PRIVATE KEY]" in out
+    assert body not in out
+
+
+def test_redact_pgp_unterminated_private_key():
+    from clipboard_sidekick.redaction import redact
+    text = "note -----BEGIN PGP PRIVATE KEY BLOCK-----\nsecretarmor\nmore secret"
+    out, triggered = redact(text)
+    assert triggered is True
+    assert "secretarmor" not in out
+    assert "more secret" not in out
+    assert "note" in out
+
+
+def test_redact_json_password_double_quoted():
+    from clipboard_sidekick.redaction import redact
+    out, triggered = redact('{"password":"hunter2"}')
+    assert triggered is True
+    assert "hunter2" not in out
+    out2, triggered2 = redact('"password": "hunter2"')
+    assert triggered2 is True
+    assert "hunter2" not in out2
+
+
+def test_redact_json_password_single_quoted():
+    from clipboard_sidekick.redaction import redact
+    out, triggered = redact("{'password': 'hunter2'}")
+    assert triggered is True
+    assert "hunter2" not in out
+
+
+def test_redact_multiword_unquoted_passphrase_full_tail():
+    from clipboard_sidekick.redaction import redact
+    out, triggered = redact("password=hunter2 and more secret")
+    assert triggered is True
+    assert "hunter2" not in out
+    assert "and more secret" not in out
+    assert out == "password=[REDACTED]"
+
+
+def test_redact_multiword_passphrase_stays_within_password_line():
+    from clipboard_sidekick.redaction import redact
+    text = "password=correct horse battery staple\nother=keepme"
+    out, triggered = redact(text)
+    assert triggered is True
+    assert "correct horse battery staple" not in out
+    assert "other=keepme" in out
