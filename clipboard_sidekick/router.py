@@ -4,13 +4,16 @@ classify() maps a string to one of: word, error, code, url, long, number,
 other. Deterministic and rule-based, no model calls, no network, no ML.
 
 Routing order is significant:
-    1. long  , over _LONG_THRESHOLD characters
+    1. error , tracebacks, exceptions, HTTP 4xx/5xx, file.ext:line[:col]
     2. url   , contains http(s)://
-    3. error , tracebacks, exceptions, HTTP 4xx/5xx, file.ext:line[:col]
-    4. code  , brackets, keywords, indentation heuristics
+    3. code  , brackets, keywords, indentation heuristics
+    4. long  , over _LONG_THRESHOLD characters
     5. number, number/unit or date-like text
-    6. word  , 1-3 tokens, term-charset characters only (no code symbols)
+    6. word  , 1-3 term-charset tokens, no code symbols
     7. other , fallback
+
+error / url / code are checked before the length cutoff so that realistic
+long inputs, e.g. multi-line tracebacks, route to their dedicated handler.
 
 `word` implements the plain rule: 1-3 whitespace-separated tokens whose
 characters are not code symbols. Multi-word plain-lowercase phrases such as
@@ -131,14 +134,14 @@ def _looks_like_word(text: str) -> bool:
 
 def classify(text: str) -> str:
     """Classify copied text into word, error, code, url, long, number, or other."""
-    if len(text) > _LONG_THRESHOLD:
-        return "long"
-    if _URL_RE.search(text):
-        return "url"
     if _looks_like_error(text):
         return "error"
+    if _URL_RE.search(text):
+        return "url"
     if _looks_like_code(text):
         return "code"
+    if len(text) > _LONG_THRESHOLD:
+        return "long"
     if _looks_like_number(text):
         return "number"
     if _looks_like_word(text):
