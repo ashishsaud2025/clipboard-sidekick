@@ -53,13 +53,14 @@ class CliAgentBackend(_BaseBackend):
         return argv
 
     def stream_ask(self, system: str, prompt: str):
+        self._check_cancelled("before dispatch")  # pre-flight: no dispatch
         raise LLMError(
             "cli_agent: streaming is not supported by this backend "
             "(the CLI's stdout is captured only after it exits)"
         )
 
     def ask(self, system: str, prompt: str) -> str:
-        self._reset_cancel()
+        self._check_cancelled("before dispatch")  # pre-flight: no dispatch
         argv = self._argv()
         stdin_text = f"{system}\n\n{prompt}"
         try:
@@ -98,8 +99,8 @@ class CliAgentBackend(_BaseBackend):
         finally:
             self._active_process = None
 
-        if self._cancelled:
-            raise LLMError(f"cli_agent: cancelled while running {argv[0]!r}")
+        if self._take_cancelled():
+            raise LLMError(f"cli_agent: cancelled by user while running {argv[0]!r}")
         if proc.returncode != 0:
             tail = _truncate((err or "").strip(), _STDERR_TAIL)
             raise LLMError(

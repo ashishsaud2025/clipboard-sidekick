@@ -78,8 +78,18 @@ class _BaseBackend:
             except Exception:
                 pass
 
-    def _reset_cancel(self) -> None:
-        self._cancelled = False
+    def _check_cancelled(self, stage: str) -> None:
+        """Consume the cancel flag; raise LLMError naming cancellation if set."""
+        if self._cancelled:
+            self._cancelled = False  # consume, so a later call is not failed too
+            raise LLMError(f"{self.name}: cancelled by user {stage}")
+
+    def _take_cancelled(self) -> bool:
+        """Read and clear the cancel flag; True if cancellation was requested."""
+        if self._cancelled:
+            self._cancelled = False
+            return True
+        return False
 
     # Shared helpers
     def _check_status(self, response, operation: str) -> None:
@@ -107,7 +117,7 @@ class _BaseBackend:
                 if line:
                     yield line
         except requests.RequestException as exc:
-            if self._cancelled:
+            if self._take_cancelled():
                 return  # closed underneath us by cancel(); end of stream
             raise LLMError(
                 f"{self.name}: {operation} stream failed: {exc.__class__.__name__}"
@@ -123,7 +133,7 @@ class _BaseBackend:
 
     # Template: non-stream
     def ask(self, system: str, prompt: str) -> str:
-        self._reset_cancel()
+        self._check_cancelled("before dispatch")  # pre-flight: no HTTP issued
         self._preflight()
         url = self._url()
         operation = "ask"
@@ -133,6 +143,12 @@ class _BaseBackend:
             headers=self._headers(),
             timeout=self.timeout,
         )
+        if self._take_cancelled():  # cancel() landed during the request
+            try:
+                response.close()
+            except Exception:
+                pass  # best-effort; the answer is discarded either way
+            raise LLMError(f"{self.name}: cancelled by user before {self.name} responded")
         self._check_status(response, operation)
         try:
             data = response.json()
@@ -144,12 +160,13 @@ class _BaseBackend:
 
     # Template: stream
     def stream_ask(self, system: str, prompt: str) -> Iterator[str]:
-        self._reset_cancel()
+        self._check_cancelled("before dispatch")  # pre-flight: no dispatch
         self._preflight()
         return self._stream_generator(system, prompt)
 
     def _stream_generator(self, system: str, prompt: str) -> Iterator[str]:
         operation = "stream"
+        self._check_cancelled("before dispatch")  # cancel after creation, before POST
         response = None
         try:
             response = self._post(
@@ -162,7 +179,7 @@ class _BaseBackend:
             self._active_response = response
             self._check_status(response, operation)
             for line in self._iter_lines(response, operation):
-                if self._cancelled:
+                if self._take_cancelled():
                     return
                 chunk = self._parse_stream_line(line)
                 if chunk is None:  # end-of-stream sentinel (e.g. [DONE], message_stop)

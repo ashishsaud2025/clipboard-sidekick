@@ -139,6 +139,47 @@ def test_cancel_when_nothing_in_flight_is_safe():
     client.cancel()  # must not raise
 
 
+def test_pre_flight_cancel_blocks_non_stream_dispatch(monkeypatch):
+    issued = []
+
+    def fake_post(*args, **kwargs):
+        issued.append((args, kwargs))
+        return FakeResponse(200, json_data={"response": "never returned"})
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    client = LLMClient(backend="ollama")
+    client.cancel()  # cancel requested before dispatch
+    with pytest.raises(LLMError) as excinfo:
+        client.ask("sys", "user")
+    assert "cancel" in str(excinfo.value).lower()
+    assert issued == []  # no HTTP request was issued
+
+
+def test_pre_flight_cancel_blocks_stream_dispatch(monkeypatch):
+    issued = []
+    monkeypatch.setattr(requests, "post",
+                        lambda *a, **k: issued.append((a, k)))
+    client = LLMClient(backend="ollama")
+    client.cancel()  # cancel requested before dispatch
+    with pytest.raises(LLMError) as excinfo:
+        client.ask("sys", "user", stream=True)
+    assert "cancel" in str(excinfo.value).lower()
+    assert issued == []  # no HTTP request was issued
+
+
+def test_cancel_during_non_stream_call_raises_and_discards_answer(monkeypatch):
+    client = LLMClient(backend="ollama")
+
+    def fake_post(*args, **kwargs):
+        client.cancel()  # cancel lands mid-call, while the request is in flight
+        return FakeResponse(200, json_data={"response": "should be discarded"})
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    with pytest.raises(LLMError) as excinfo:
+        client.ask("sys", "user")
+    assert "cancel" in str(excinfo.value).lower()
+
+
 # 8. is_remote mapping for all four backends
 
 @pytest.mark.parametrize(
