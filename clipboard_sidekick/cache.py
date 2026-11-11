@@ -95,8 +95,9 @@ class Cache:
         """Insert or replace the answer for ``key``.
 
         ``text`` is the raw entered text, stored for the history view; pass it
-        whenever the original text is available. When ``history_enabled`` is
-        False this does nothing at all.
+        whenever the original text is available. When ``text`` is omitted,
+        history rows store ``text=""``. When ``history_enabled`` is False this
+        does nothing at all.
         """
         if not self.history_enabled:
             return
