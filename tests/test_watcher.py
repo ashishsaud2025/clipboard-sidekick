@@ -143,15 +143,90 @@ def test_echo_prints_classification_and_still_calls_callback(qapp, capsys):
     assert calls == ["https://example.com/page"]
 
 
-def test_start_stop_idempotent(qapp):
+class _FakeSignal:
+    def __init__(self):
+        self.slots = []
+
+    def connect(self, slot):
+        self.slots.append(slot)
+
+    def disconnect(self, slot):
+        self.slots.remove(slot)
+
+
+class _FakeClipboard:
+    def __init__(self, text=""):
+        self.text_value = text
+        self.dataChanged = _FakeSignal()
+
+    def text(self):
+        return self.text_value
+
+
+class _FakeGuiApp:
+    clipboard_instance = None
+
+    @staticmethod
+    def clipboard():
+        return _FakeGuiApp.clipboard_instance
+
+
+def test_start_connects_once_and_stop_disconnects(qapp, monkeypatch):
+    from clipboard_sidekick.clipboard import watcher as watcher_module
+
+    calls = []
+    fake = _FakeClipboard("hello")
+    monkeypatch.setattr(watcher_module, "QGuiApplication", _FakeGuiApp)
+    monkeypatch.setattr(_FakeGuiApp, "clipboard_instance", fake)
+
+    w = watcher_module.ClipboardWatcher(on_change=calls.append)
+    w.stop()  # safe when never started
+    assert w._started is False
+
+    w.start()
+    assert w._started is True
+    assert w._clipboard is fake
+    assert len(fake.dataChanged.slots) == 1
+
+    w.start()  # must not double-connect
+    assert len(fake.dataChanged.slots) == 1
+
+    w.stop()
+    assert w._started is False
+    assert w._clipboard is None
+    assert fake.dataChanged.slots == []
+
+    w.stop()
+    assert fake.dataChanged.slots == []
+
+
+def test_on_data_changed_delivers_text_and_skips_empty(qapp):
     from clipboard_sidekick.clipboard.watcher import ClipboardWatcher
 
-    w = ClipboardWatcher(on_change=lambda text: None)
-    w.stop()  # safe when never started
-    w.start()
-    w.start()  # no-op
-    w.stop()
-    w.stop()  # no-op
+    calls = []
+    fake = _FakeClipboard("hello")
+    w = ClipboardWatcher(on_change=calls.append)
+    w._clipboard = fake
+
+    w._on_data_changed()
+    assert calls == ["hello"]
+
+    for empty in ("", None):
+        fake.text_value = empty
+        w._on_data_changed()
+    assert calls == ["hello"]
+
+    fake.text_value = "world"
+    w._on_data_changed()
+    assert calls == ["hello", "world"]
+
+    class _RaisingClipboard:
+        def text(self):
+            raise RuntimeError("clipboard gone")
+
+    w._clipboard = _RaisingClipboard()
+    w._on_data_changed()  # must not raise or emit
+    assert calls == ["hello", "world"]
 
 
 def test_has_sensitive_format_markers():
@@ -161,6 +236,10 @@ def test_has_sensitive_format_markers():
     assert has_sensitive_format(["text/plain", "CanIncludeInClipboardHistory"])
     assert has_sensitive_format(["text/plain", "CanUploadToCloudClipboard"])
     assert has_sensitive_format(["text/plain", "ClipboardViewerIgnore"])
+    assert has_sensitive_format(["text/plain", "Clipboard Viewer Ignore"])
+    assert has_sensitive_format(
+        ['application/x-qt-windows-mime;value="Clipboard Viewer Ignore"']
+    )
     assert has_sensitive_format(["text/plain", "application/x-1password-password"])
     # Case-insensitive matching.
     assert has_sensitive_format(["excludeclipboardcontentfrommonitorprocessing"])

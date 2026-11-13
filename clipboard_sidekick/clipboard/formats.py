@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-# Markers are matched case-insensitively as substrings of a format name.
+# Markers are already squashed: lowercase, letters and digits only.
 _SENSITIVE_MARKERS: tuple[str, ...] = (
     "excludeclipboardcontentfrommonitorprocessing",
     "canincludeinclipboardhistory",
@@ -22,13 +22,20 @@ _SENSITIVE_MARKERS: tuple[str, ...] = (
     "password",
 )
 
-# Normalized (lowercase) sensitive format names.
+# Squashed (lowercase, alphanumeric-only) sensitive format names.
+# Kept for compatibility; canonical markers are the values above.
 SENSITIVE_FORMATS: frozenset[str] = frozenset(_SENSITIVE_MARKERS)
 
 
+def _squash(format_name: object) -> str:
+    """Lowercase and keep only letters/digits, so spacing and punctuation
+    variants such as ``Clipboard Viewer Ignore`` still match."""
+    return "".join(ch for ch in str(format_name).lower() if ch.isalnum())
+
+
 def _is_sensitive_name(format_name: object) -> bool:
-    normalized = str(format_name).lower()
-    return any(marker in normalized for marker in SENSITIVE_FORMATS)
+    squashed = _squash(format_name)
+    return any(marker in squashed for marker in SENSITIVE_FORMATS)
 
 
 def has_sensitive_format(
