@@ -159,6 +159,37 @@ def test_cache_hit_returns_immediately_without_calling_llm(tmp_path):
     assert q.pending is None
 
 
+def test_cache_hit_clears_older_pending_work(tmp_path):
+    cache = Cache(tmp_path / "cache.db")
+    cache.set(cache.key_for("b", "v1"), "cached b", text="b")
+
+    scheduler = ManualScheduler()
+    calls = []
+    results = []
+    q = PrefetchQueue(
+        lambda text: (calls.append(text) or "fresh"),
+        cache=cache,
+        delay=0.4,
+        on_result=lambda text, answer: results.append((text, answer)),
+        scheduler=scheduler,
+    )
+
+    q.submit("a", "v1")          # miss: older work with a timer armed
+    stale = scheduler.last()
+    assert q.pending == "a"
+
+    assert q.submit("b", "v1") == "cached b"
+
+    assert stale.cancelled is True
+    assert q.pending is None
+    assert results == [("b", "cached b")]
+
+    scheduler.force_fire(stale)  # an already-started timer for "a"
+
+    assert calls == []                        # "a" never reaches llm
+    assert results == [("b", "cached b")]     # and no late "a" callback
+
+
 def test_cache_miss_stores_answer_with_source_text(tmp_path):
     cache = Cache(tmp_path / "cache.db")
     scheduler = ManualScheduler()
@@ -375,6 +406,63 @@ def test_new_copy_while_running_is_deferred_and_never_overlaps():
     scheduler.fire()
     assert calls == ["a", "b"]
     assert q.pending is None
+
+
+class _CancelSpyLLM:
+    """Callable fake exposing a cancel spy."""
+
+    def __init__(self):
+        self.calls = []
+        self.cancel_calls = 0
+
+    def __call__(self, text):
+        self.calls.append(text)
+        return f"answer:{text}"
+
+    def cancel(self):
+        self.cancel_calls += 1
+
+
+def test_submit_while_idle_never_cancels_llm():
+    llm = _CancelSpyLLM()
+    scheduler = ManualScheduler()
+    q = PrefetchQueue(llm, delay=0.4, scheduler=scheduler)
+
+    q.submit("a")
+    assert llm.cancel_calls == 0  # only a debounce timer is pending
+    q.submit("b")
+    assert llm.cancel_calls == 0  # replacing a timer is not in-flight work
+
+    scheduler.fire()
+    assert llm.calls == ["b"]
+    assert llm.cancel_calls == 0
+
+
+def test_submit_while_running_cancels_llm_exactly_once():
+    holder = {}
+
+    class ReentrantLLM(_CancelSpyLLM):
+        def __call__(self, text):
+            self.calls.append(text)
+            if text == "a":
+                holder["queue"].submit("b")  # copy arrives mid-request
+            return f"answer:{text}"
+
+    llm = ReentrantLLM()
+    scheduler = ManualScheduler()
+    q = PrefetchQueue(llm, delay=0.4, scheduler=scheduler)
+    holder["queue"] = q
+
+    q.submit("a")
+    scheduler.fire()  # "a" is running when "b" arrives
+
+    assert llm.calls == ["a"]
+    assert llm.cancel_calls == 1  # exactly one in-flight cancel
+    assert q.pending == "b"
+
+    q.flush()  # runs the deferred "b"
+    assert llm.calls == ["a", "b"]
+    assert llm.cancel_calls == 1  # flush started no second in-flight call
 
 
 def test_cache_requires_prompt_version(tmp_path):

@@ -21,6 +21,13 @@ Threading: with the default scheduler the ``llm`` call runs on a daemon
 ``threading.Timer`` thread, never on the caller's (Qt) thread. Shared state is
 guarded by a condition variable and all callbacks fire outside it. There are
 no sleeps, polls or busy-waits in this module.
+
+``llm.cancel()`` is only called while a request is genuinely in flight, never
+for a submit that merely replaces a debounce timer. A residual race remains: a
+cancel can arrive just as the request finishes, leaving a sticky cancel flag on
+the client for its next call. The generation guard here discards stale results
+and the wiring layer (T11) is responsible for passing a ``cancel`` that is
+safe to call when idle.
 """
 
 from __future__ import annotations
@@ -54,7 +61,9 @@ class PrefetchQueue:
     llm:
         Called with the raw clipboard text as its single positional argument.
         It may return the answer as a ``str`` or an iterator/generator of
-        streamed chunks.
+        streamed chunks. A ``cancel`` attribute, if present, is invoked only
+        when a request is actually running; it may race with completion, so
+        if it is sticky the wiring layer must make it safe when idle.
     cache:
         Optional :class:`clipboard_sidekick.cache.Cache`. With a cache,
         ``prompt_version`` must be a non-empty string (``Cache.key_for``
@@ -127,6 +136,17 @@ class PrefetchQueue:
             key = cache.key_for(text, prompt_version)
             cached = cache.get(key)
             if cached is not None:
+                # The cached answer is the newest work: older pending text
+                # must never reach the model after this point.
+                with self._cond:
+                    if self._closed:
+                        return None
+                    self._pending = None
+                    self._generation += 1
+                    self._cancel_timer_locked()
+                    in_flight = self._running
+                if in_flight:
+                    self._cancel_in_flight()
                 self._notify_result(text, cached)
                 return cached
 
@@ -139,13 +159,10 @@ class PrefetchQueue:
             self._generation += 1
             self._cancel_timer_locked()
             self._arm_locked(self._generation)
+            in_flight = self._running
 
-        cancel = self._cancel_llm
-        if cancel is not None:
-            try:
-                cancel()
-            except Exception:
-                pass
+        if in_flight:
+            self._cancel_in_flight()
         return None
 
     def flush(self) -> str | None:
@@ -270,6 +287,16 @@ class PrefetchQueue:
                     self._arm_locked(self._generation)
 
         return answer
+
+    def _cancel_in_flight(self) -> None:
+        """Ask the callable to abort the request that is currently running."""
+        cancel = self._cancel_llm
+        if cancel is None:
+            return
+        try:
+            cancel()
+        except Exception:
+            pass
 
     def _remember(self, key: str | None, text: str, answer: str) -> None:
         """Write to the cache; a failing cache must not lose the answer."""
