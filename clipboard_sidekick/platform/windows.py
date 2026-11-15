@@ -15,7 +15,13 @@ Nothing here reads clipboard text, writes files, or touches the network.
 from __future__ import annotations
 
 import ctypes
+import os
 import sys
+
+try:
+    import winreg
+except Exception:  # pragma: no cover - non-Windows
+    winreg = None
 
 import psutil
 
@@ -166,3 +172,47 @@ def get_foreground_window_title() -> str | None:
         return buffer.value or None
     except Exception:
         return None
+
+
+def set_start_with_windows(enabled: bool) -> bool:
+    """Register or unregister Clipboard Sidekick to start with Windows.
+
+    Writes/removes ``HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\
+    ClipboardSidekick``. Non-Windows is a no-op returning False. Never raises.
+    """
+    try:
+        if sys.platform != "win32":
+            return False
+        if winreg is None:
+            return False
+
+        key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE
+        ) as key:
+            if enabled:
+                exe = sys.executable or ""
+                if exe.lower().endswith("python.exe"):
+                    exe = exe[:-len("python.exe")] + "pythonw.exe"
+                if sys.argv and sys.argv[0]:
+                    script = sys.argv[0]
+                else:
+                    script = os.path.join(
+                        os.path.dirname(os.path.abspath(__file__)), "..", "main.py"
+                    )
+                script = os.path.abspath(script)
+                value = '"%s" "%s"' % (exe, script)
+                winreg.SetValueEx(
+                    key, "ClipboardSidekick", 0, winreg.REG_SZ, value
+                )
+            else:
+                try:
+                    winreg.DeleteValue(key, "ClipboardSidekick")
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    # Some fakes raise OSError; treat missing value as success.
+                    pass
+        return True
+    except Exception:
+        return False
