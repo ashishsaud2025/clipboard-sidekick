@@ -71,14 +71,31 @@ class TrayApp(QObject):
         self._build_tray()
 
     # State
+    @property
+    def settings(self) -> Any:
+        return self._settings
+
+    @settings.setter
+    def settings(self, value: Any) -> None:
+        self._settings = value
+
+    @property
+    def cache(self) -> Any:
+        return self._cache
+
+    @cache.setter
+    def cache(self, value: Any) -> None:
+        self._cache = value
+
     def is_paused(self) -> bool:
         return bool(self._paused)
 
     def set_paused(self, value: bool) -> None:
         new_val = bool(value)
+        changed = new_val != self._paused
         self._paused = new_val
         self._update_pause_ui()
-        if self._on_pause_changed is not None:
+        if changed and self._on_pause_changed is not None:
             try:
                 self._on_pause_changed(new_val)
             except Exception:
@@ -194,6 +211,7 @@ class SettingsDialog(QDialog):
         start_on_login_setter: Callable[[bool], bool] | None = None,
         settings_path: Path | None = None,
         on_settings_saved: Callable[[Settings], None] | None = None,
+        on_saved: Callable[[Settings], None] | None = None,
         **kwargs: Any,
     ) -> None:
         if not isinstance(parent, QWidget):
@@ -218,6 +236,16 @@ class SettingsDialog(QDialog):
                 if key in kwargs:
                     settings_path = kwargs.pop(key)
                     break
+        # Resolve saved callback from either kw name
+        if on_settings_saved is None:
+            on_settings_saved = on_saved
+        if on_settings_saved is None:
+            for key in ("on_saved", "saved_callback", "on_save", "callback"):
+                if key in kwargs:
+                    on_settings_saved = kwargs.pop(key)
+                    break
+        if on_saved is None and on_settings_saved is not None:
+            on_saved = on_settings_saved
         super().__init__(parent)
         self.settings = settings
         self._settings = settings
@@ -229,6 +257,7 @@ class SettingsDialog(QDialog):
             self._start_on_login_setter = start_on_login_setter
         self._settings_path = settings_path
         self._on_settings_saved = on_settings_saved
+        self._on_saved = on_saved
 
         self.setWindowTitle("Settings")
         self.setModal(True)
@@ -267,7 +296,7 @@ class SettingsDialog(QDialog):
         self.prefetch_check = self.prefetch_on
 
         self.max_text_length = QSpinBox(self)
-        self.max_text_length.setRange(2, 10_000_000)
+        self.max_text_length.setRange(0, 10_000_000)
         self.max_text_length.setValue(int(getattr(settings, "max_text_length", 4000)))
         self.max_text_length_spin = self.max_text_length
         self.max_length_spin = self.max_text_length
@@ -379,6 +408,14 @@ class SettingsDialog(QDialog):
         if setter is not None:
             try:
                 setter(s.start_with_windows)
+            except Exception:
+                pass
+        cb = self._on_settings_saved
+        if cb is None:
+            cb = getattr(self, "_on_saved", None)
+        if cb is not None:
+            try:
+                cb(s)
             except Exception:
                 pass
         super().accept()

@@ -23,13 +23,26 @@ class HistoryDialog(QDialog):
     def __init__(self, cache: Any = None, parent: Any = None, *,
                  limit: int = 50, **kwargs: Any) -> None:
         from PySide6.QtWidgets import QWidget
-        if cache is None and "cache" in kwargs:
-            cache = kwargs.pop("cache")
-        if parent is None and "parent" in kwargs:
-            parent = kwargs.pop("parent")
-        if isinstance(cache, QWidget) and parent is None:
+        if "cache" in kwargs:
+            kw_cache = kwargs.pop("cache")
+            if cache is None:
+                cache = kw_cache
+        if "parent" in kwargs:
+            kw_parent = kwargs.pop("parent")
+            if parent is None:
+                parent = kw_parent
+        # Detect (parent, cache) positional order: if first is not cache-like
+        # and second is cache-like, swap.
+        if cache is not None and parent is not None:
+            if not hasattr(cache, "recent") and hasattr(parent, "recent"):
+                cache, parent = parent, cache
+        # Handle HistoryDialog(None, cache): first None, second cache-like.
+        if cache is None and parent is not None and hasattr(parent, "recent"):
+            cache, parent = parent, None
+        # If a single QWidget was passed as `cache`, treat as parent.
+        if cache is not None and not hasattr(cache, "recent") and isinstance(cache, QWidget) and parent is None:
             parent = cache
-            cache = kwargs.get("cache", None)
+            cache = None
         if not isinstance(parent, QWidget):
             parent = None
         super().__init__(parent)
@@ -119,5 +132,11 @@ class HistoryDialog(QDialog):
             except Exception:
                 pass
         self.refresh()
+
+    def clear(self) -> None:
+        self._on_clear()
+
+    def clear_history(self) -> None:
+        self._on_clear()
 
     # clear_button / close_button are set as instance attributes in __init__
