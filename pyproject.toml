@@ -19,6 +19,12 @@ dependencies = [
 dev = [
     "pytest>=8",
 ]
+build = [
+    "pyinstaller>=6",
+]
+
+[project.scripts]
+clipboard-sidekick = "clipboard_sidekick.main:main"
 
 [tool.setuptools.packages.find]
 include = ["clipboard_sidekick*"]

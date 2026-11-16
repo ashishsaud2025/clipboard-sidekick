@@ -24,6 +24,30 @@ Clipboard Sidekick is a Windows 11 desktop app (Python 3.11+, PySide6) that watc
 - History: copy history can be disabled or cleared at any time; nothing is retained beyond what you configure.
 - The anthropic backend only authenticates via an environment variable, so keys never reach disk in the settings file.
 
+## Running
+
+Install dependencies and run from the repo root:
+
+```bash
+pip install -e .
+clipboard-sidekick
+```
+
+Or directly:
+
+```bash
+python -m clipboard_sidekick.main
+```
+
+## Packaging
+
+A PyInstaller build can be produced with:
+
+```bash
+pip install -e ".[build]"
+pyinstaller --name clipboard-sidekick --windowed --noconfirm clipboard_sidekick/main.py
+```
+
 ## Wayland / global-hotkey caveat
 
 Global hotkeys depend on the platform's ability to register a system-wide shortcut. On Wayland (and some locked-down or remote desktop sessions), global hotkey capture may be blocked by the compositor or session policy; the app may need to fall back to a focused window or a different trigger mechanism, or hotkeys may not work at all. On Windows 11 this is generally not an issue.
