@@ -122,7 +122,28 @@ def has_sensitive_format() -> bool:
 
 def _user32():
     """Load user32 lazily. Only ever called after the win32 platform guard."""
-    return ctypes.WinDLL("user32", use_last_error=True)
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    # Declare signatures: on Win64 the default c_int restype truncates HWND /
+    # DWORD handles, which would misidentify the foreground process and
+    # defeat the blocklist guard. Explicit argtypes/restype avoids that.
+    wintypes = ctypes.wintypes if hasattr(ctypes, "wintypes") else None
+    if wintypes is not None:
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        user32.GetForegroundWindow.argtypes = []
+
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        user32.GetWindowThreadProcessId.argtypes = [
+            wintypes.HWND,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+
+        user32.GetWindowTextW.restype = ctypes.c_int
+        user32.GetWindowTextW.argtypes = [
+            wintypes.HWND,
+            wintypes.LPWSTR,
+            ctypes.c_int,
+        ]
+    return user32
 
 
 def get_foreground_process_name() -> str | None:

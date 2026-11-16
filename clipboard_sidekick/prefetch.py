@@ -200,6 +200,11 @@ class PrefetchQueue:
             self._generation += 1
             self._cancel_timer_locked()
 
+    def set_cache(self, cache) -> None:
+        """Swap the cache used for subsequent submits. Thread-safe."""
+        with self._cond:
+            self._cache = cache
+
     def close(self) -> None:
         """Stop accepting work and drop anything queued. Idempotent."""
         with self._cond:

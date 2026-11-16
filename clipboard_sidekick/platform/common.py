@@ -6,12 +6,23 @@ a no-op returning ``False``.
 
 Matching logic is shared with Windows: :func:`is_blocked` and
 :data:`DEFAULT_BLOCKLIST` are re-exported from :mod:`.windows` so there is a
-single implementation.
+single implementation. The import is lazy/guarded so that
+``import clipboard_sidekick.platform.common`` still succeeds on a machine
+where ``platform.windows`` cannot be imported at all, the app always
+requires PySide6, but a missing optional Windows-only dependency must not
+break stubs.
 """
 
 from __future__ import annotations
 
-from .windows import DEFAULT_BLOCKLIST, is_blocked
+try:
+    from .windows import DEFAULT_BLOCKLIST, is_blocked
+except Exception:  # keep stubs usable when windows can't load
+
+    DEFAULT_BLOCKLIST: tuple[str, ...] = ()
+
+    def is_blocked(process_name, blocklist, *, window_title=None) -> bool:  # type: ignore[no-redef]
+        return False
 
 
 def get_foreground_process_name() -> None:

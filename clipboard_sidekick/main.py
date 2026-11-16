@@ -14,7 +14,7 @@ from .clipboard.watcher import ClipboardWatcher
 from .clipboard.formats import has_sensitive_format as _qt_sensitive
 from .config import load_settings, save_settings
 from .hotkey import register_hotkey, unregister
-from .llm.client import LLMClient
+from .llm.client import LLMClient, LLMError
 from .popup import Popup
 from .prefetch import PrefetchQueue
 from .redaction import redact
@@ -71,6 +71,11 @@ class _LlmAdapter:
     Classifies the text, loads the matching prompt, applies redaction as a
     guard, and streams the answer. ``cancel`` is a no-op when nothing is
     active, so it is safe to call from the wiring layer at any time.
+
+    Streaming is attempted first; backends that do not support it (notably
+    ``cli_agent``, which raises ``LLMError`` with "streaming is not
+    supported" in the message) fall back to a non-streaming request so the
+    popup still answers.
     """
 
     def __init__(self, client, *, classify_fn=classify, prompt_loader=_load_prompt):
@@ -87,7 +92,13 @@ class _LlmAdapter:
             cleaned, triggered = redact(text)
             if triggered:
                 raise RuntimeError("redacted content")
-            answer = self.client.ask(system, cleaned, stream=True)
+            try:
+                answer = self.client.ask(system, cleaned, stream=True)
+            except LLMError as exc:
+                if "stream" in str(exc).lower():
+                    answer = self.client.ask(system, cleaned, stream=False)
+                else:
+                    raise
             if isinstance(answer, str):
                 self._active = False
                 return answer
@@ -111,6 +122,9 @@ class _LlmAdapter:
             except Exception:
                 pass
 
+    def reset_active(self):
+        self._active = False
+
 
 class AppContext:
     """Mutable container for the wired application state."""
@@ -131,12 +145,6 @@ class AppContext:
         self.last_answer = None
         self.pending_sensitive_text = None
         self.hotkey_combo = None
-
-    def __iter__(self):
-        # Allow ``app, ctx = build_application(...)`` unpacking while still
-        # letting ``ctx = build_application(...)`` work.
-        yield self.app
-        yield self
 
 
 def _make_blocked_check(settings):
@@ -164,7 +172,7 @@ def _make_blocked_check(settings):
             if _qt_sensitive():
                 return True
         except Exception:
-            pass
+            return True  # fail-closed (matches the watcher's check)
         return False
 
     return blocked_check
@@ -176,7 +184,6 @@ def build_application(settings_path=None, app=None):
     Tests can call this with a temp settings path and an existing QApplication
     to avoid ``exec()``.
     """
-    global _APP
     if app is None:
         try:
             app = QApplication.instance()
@@ -312,25 +319,43 @@ def build_application(settings_path=None, app=None):
                 pass
             return
         if answer is None:
+            if ctx.paused:
+                try:
+                    ctx.popup.show_for(
+                        text,
+                        "Paused \u2014 resume from tray to prefetch.",
+                        remote=remote,
+                        cached=False,
+                    )
+                except Exception:
+                    pass
+                return
             try:
                 ctx.popup.show_for(text, None, remote=remote, cached=False)
             except Exception:
                 pass
-            if (not ctx.paused) and text:
-                try:
-                    ctx.prefetch.submit(text, prompt_version=version)
-                except Exception:
-                    pass
+            try:
+                ctx.prefetch.submit(text, prompt_version=version)
+            except Exception:
+                pass
         else:
             try:
                 ctx.popup.show_for(text, answer, remote=remote, cached=True)
             except Exception:
                 pass
 
+
     def on_follow_up(question):
         q = (question or "").strip() if isinstance(question, str) else ""
         if not q:
             return
+        if ctx.pending_sensitive_text:
+            try:
+                cleaned = redact(ctx.pending_sensitive_text)[0]
+            except Exception:
+                cleaned = "[redacted]"
+            q = f"Context (redacted):\n{cleaned}\n\n{q}"
+            ctx.pending_sensitive_text = None
         remote = False
         try:
             remote = ctx.llm_client.is_remote
@@ -357,6 +382,11 @@ def build_application(settings_path=None, app=None):
         ctx.paused = bool(paused)
 
     def on_settings_saved(s):
+        try:
+            if ctx.llm_adapter is not None:
+                ctx.llm_adapter.cancel()
+        except Exception:
+            pass
         ctx.settings = s
         try:
             if ctx.settings_path is not None:
@@ -386,7 +416,7 @@ def build_application(settings_path=None, app=None):
             )
             if ctx.llm_adapter is not None:
                 ctx.llm_adapter.client = ctx.llm_client
-                ctx.llm_adapter._active = False
+                ctx.llm_adapter.reset_active()
         except Exception:
             pass
         try:
@@ -401,7 +431,7 @@ def build_application(settings_path=None, app=None):
                 history_enabled=getattr(s, "history_enabled", True),
             )
             if ctx.prefetch is not None:
-                ctx.prefetch._cache = ctx.cache
+                ctx.prefetch.set_cache(ctx.cache)
         except Exception:
             pass
         try:
@@ -457,32 +487,18 @@ def build_application(settings_path=None, app=None):
     except Exception:
         pass
 
-    _APP = app
-    return ctx
+    return app, ctx
 
 
 def main() -> int:
     try:
-        _QApplication = globals().get("QApplication", QApplication)
-        _Path = globals().get("Path", Path)
-        app = _QApplication.instance() if hasattr(_QApplication, "instance") else None
-        if app is None:
-            app = _QApplication(sys.argv)
+        app = QApplication.instance() or QApplication(sys.argv)
         try:
             app.setApplicationName("Clipboard Sidekick")
         except Exception:
             pass
-
-        override = globals().get("settings_path", None)
-        if override is not None:
-            settings_path = _Path(override)
-        else:
-            settings_path = _Path.home() / ".clipboard-sidekick" / "settings.json"
-        ctx = build_application(settings_path, app=app)
-        try:
-            ctx.tray.show()
-        except Exception:
-            pass
+        settings_path = Path.home() / ".clipboard-sidekick" / "settings.json"
+        app, ctx = build_application(settings_path, app=app)
         return int(app.exec())
     except Exception as exc:
         print(f"Clipboard Sidekick failed to start: {exc}")
