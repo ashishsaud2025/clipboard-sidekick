@@ -66,12 +66,27 @@ def test_hotkey_cached_path_shows_popup(qapp, tmp_settings, monkeypatch):
     monkeypatch.setattr(ctx.popup, "show_for", lambda *a, **k: seen.append((a, k)))
     cb = QApplication.clipboard()
     cb.setText("hello world")
-    # Drive the watcher path that on_hotkey uses: simulate the hotkey by
-    # calling the registered callback directly through the watcher handler
-    # is not possible; instead verify the pieces used by on_hotkey.
-    from clipboard_sidekick.router import classify
+    # Drive on_hotkey through the native filter registered by build_application.
+    # hotkey.py parses native events via ctypes message structs; off-Windows
+    # we can still exercise the filter object directly if present.
+    import clipboard_sidekick.hotkey as hk
 
-    assert classify("hello world") in {"word", "other", "long"}
+    reg = getattr(hk, "_registered", None)
+    assert reg is not None, "build_application should have registered a hotkey"
+    _cb, _combo, _hid, native_filter, _app, _hwnd = reg
+    # Feed a synthetic WM_HOTKEY with a matching wParam. On non-win32 the
+    # filter falls back to False; on win32 it dispatches. To stay
+    # platform-independent, call the callback the filter holds.
+    try:
+        # Call the filter's callback directly (it IS on_hotkey).
+        native_filter.callback()
+    except Exception:
+        pytest.fail("on_hotkey raised")
+    assert seen, "on_hotkey should show the popup"
+    # Cached path: last_answer is served, cached=True
+    assert any(k.get("cached") for (_a, k) in seen) or any(
+        "cached" in str(k).lower() for (_a, k) in seen
+    ), f"expected cached popup, got {seen!r}"
 
 
 def test_main_returns_int_with_monkeypatched_build(qapp, tmp_settings, monkeypatch):
