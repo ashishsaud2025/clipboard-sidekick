@@ -84,9 +84,9 @@ def test_hotkey_cached_path_shows_popup(qapp, tmp_settings, monkeypatch):
         pytest.fail("on_hotkey raised")
     assert seen, "on_hotkey should show the popup"
     # Cached path: last_answer is served, cached=True
-    assert any(k.get("cached") for (_a, k) in seen) or any(
-        "cached" in str(k).lower() for (_a, k) in seen
-    ), f"expected cached popup, got {seen!r}"
+    assert any(k.get("cached") is True for (_a, k) in seen), (
+        f"expected cached=True popup, got {seen!r}"
+    )
 
 
 def test_main_returns_int_with_monkeypatched_build(qapp, tmp_settings, monkeypatch):
