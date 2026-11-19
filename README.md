@@ -12,10 +12,10 @@ Clipboard Sidekick is a Windows 11 desktop app (Python 3.11+, PySide6) that watc
 
 ## Backends
 
-- `ollama` (default), local models via Ollama.
-- `openai_compatible`, any OpenAI-compatible HTTP endpoint (local or hosted), configured in settings.
-- `anthropic`, Anthropic API; the API key is read from an environment variable and never written to the settings file.
-- `cli_agent`, shells out to a locally installed CLI agent.
+- `ollama` (default): local models via Ollama.
+- `openai_compatible`: any OpenAI-compatible HTTP endpoint (local or hosted), configured in settings.
+- `anthropic`: Anthropic API; the API key is read from an environment variable and never written to the settings file.
+- `cli_agent`: shells out to a locally installed CLI agent.
 
 ## Privacy notes
 
@@ -51,3 +51,7 @@ pyinstaller --name clipboard-sidekick --windowed --noconfirm clipboard_sidekick/
 ## Wayland / global-hotkey caveat
 
 Global hotkeys depend on the platform's ability to register a system-wide shortcut. On Wayland (and some locked-down or remote desktop sessions), global hotkey capture may be blocked by the compositor or session policy; the app may need to fall back to a focused window or a different trigger mechanism, or hotkeys may not work at all. On Windows 11 this is generally not an issue.
+
+## How it's built
+
+See [architecture.md](./architecture.md) for component, sequence, and state diagrams that explain, in plain language, how the watcher, router, redaction, prefetch queue, cache, and popup fit together.
